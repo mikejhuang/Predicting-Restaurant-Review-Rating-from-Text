@@ -1,0 +1,330 @@
+---
+title: "Coincidence Strength Factor: A Feature Selection Method for Text Classification of Scale-Based Categorization"
+author: "Mike Huang"
+output: pdf_document
+graphics: yes
+---
+
+
+**Abstract:** This paper introduces a feature selection method, called Coincidence Strength Factor (CSF) threshold filtering, for Support Vector Machine (SVM) text classification of scale-based categorization of ratings (eg: 1 to 5 stars rating scale). To reduce the noise introduced by features that coincide in high frequencies between multiple categories, especially ones further away on the rating scale, this noise is quantified by the CSF and filtered above a threshold (CSF>5). This increased the classification accuracy of the SVM text classifier on Yelp reviews from 47.7% without feature selection to 54.9% with feature CSF>5 filtered. Furthermore, the variance of the classification error was reduced from 0.154 to 0.127. While the accuracy remains low as expected since ratings are very subjective between person to person, the error >1 has been significantly reduced. 
+
+#Introduction
+Is it possible to input a Yelp review into a classifier model and predict its rating? It is likely possible given that a one star review would share many features(ie:bad food,poor service,long wait, etc) that can be distinguished from a five star review. However, there are still many challenges to classify reviews accurately. First, many descriptions, aka model features, are not unique to a rating, and this would introduce noise into the model. Second, there are many descriptions that are unique to a review and thus it would either be impossible to train a model with those features or those features will never be used for prediction. Third, the raw text of the review needs to be parsed into meaningful phrases, such as bigrams and trigrams, that characterize each category. This paper explores a method of feature selection to *optimize prediction accuracy*. Furthermore, given that the categorization of reviews is on a scale (1 to 5 stars), the margin of error of the prediction category is relevant, ie: a prediction of four stars for a five star review is more useful than a prediction of one star despite both being a misclassification. This paper also aims to *minimize prediction variance.*
+
+This paper introduces a method to quantify the presence of features in proportion between categories that's weighed by the margin of error on the rating prediction. This quantification is referred to as the *Coincidence Strength Factor*, or $CSF$. Features above a threshold of $CSF>5$ are filtered out.  
+
+
+###Coincidence Strength Factor
+
+For a given term frequency, *f*, in each each rating, *r*, it's found in, 
+
+There exists $n=\binom{5}{2}=10$ combinations of pairwise ratings.
+
+Let $f_A$ and $f_B$ be the respective frequencies of a term in each rating in a pairwise rating, eg: frequency of a term found in 1 star and in 2 stars, respectively
+
+Let $\Delta$ be the distance of the pairwise rating, eg: 1 star and 3 stars has a distance of 2.
+
+Then the coincidence strength factor is defined as:
+\begin{center}
+$CSF(f,r) = \sum_{i=1}^{n} \Delta_{i} (1-\frac{|f_{A,i}-f_{B,i}|}{f_{A,i}+f_{B,i}})$
+\end{center}
+
+This would result in possible CSF values from 0 to 20, with 0 being a feature that's unique to one rating only, and 20 being a feature that's found equally across all five ratings.
+
+**Example:** The bigram, `go back`, is found in all five ratings in the following frequencies
+
+```{r echo=FALSE}
+setwd('~/Documents/yelpdata')
+load('wordcloudbigrandomsample.RData')
+load('wordCorBigRandomSample.RData')
+load('corlist.RData')
+goback<-signif(corlist[corlist$word=='go back','corxy'],3)
+```
+rating | frequency
+-------|-----------
+1 | `r onem['go back','freq']` 
+2 | `r twom['go back','freq']`
+3 | `r threem['go back','freq']`
+4 | `r fourm['go back','freq']`
+5 | `r fivem['go back','freq']`
+
+
+The CSF for each individual pairwise rating is organized into the following matrix of dimensions A*B:
+$CSF_{A,B} = \Delta_{A,B} (1-\frac{|f_A-f_B|}{f_A+f_B})$
+
+```{r echo=FALSE}
+one<-c('-',goback[8],goback[4],goback[2],goback[1])
+two<-c('-','-',goback[7],goback[5],goback[3])
+three<-c('-','-','-',goback[10],goback[6])
+four<-c('-','-','-','-',goback[9])
+five<-c('-','-','-','-','-')
+CSMatrix<-cbind(one,two,three,four,five)
+rownames(CSMatrix)<-c('one','two','three','four','five')
+CSMatrix
+```
+
+The final CSF value equals be the sum of all the values in the matrix, `r sum(goback)`. This is a high CSF value since `go back` is found in nearly even proportions in every category. 
+
+###CSF>5 Threshold
+CSF>5 was chosen as the threshold to be filtered. This would filter out words where the coincidence is high when $\Delta>1$. Ideally, filtering words at a lower threshold (ie >1) would further reduce the classification error margin, but practically, this would mean too few features would remain and this would significantly impair the accuracy of the model. A CSF>5 filters out 2437/5515 features or 44.2%. This was found to be a rough sweet spot for accuracy. It's possible that further analysis with ROC curves can optimize this threshold further. 
+
+
+```{r echo=FALSE, fig.height=3, fig.width=4, message=FALSE, error=FALSE}
+library(dplyr)
+library(ggplot2)
+dat<-data.frame(x=wordCor$corxy,Filtered=wordCor$corxy>5)
+histcsf<-ggplot(data=dat, aes(x,fill=Filtered))
+histcsf<-histcsf+geom_histogram(binwidth=1)+ggtitle("Histogram of Coincidence Strength Factor")+xlab("Coincidence Strength Factor")+ylab("Number of Features")+theme(plot.title=element_text(size=10))+theme(axis.title=element_text(size=7))
+histcsf
+```
+
+-
+
+**Example:** The feature, `awesome food`, has a $CSF=4.60412$. Despite it being present in four ratings, it's highly skewed to a rating of five, thus it's an informative feature.
+
+rating | frequency
+-------|-----------
+1 | `r onem['awesome food','freq']` 
+2 | `r twom['awesome food','freq']`
+3 | `r threem['awesome food','freq']`
+4 | `r fourm['awesome food','freq']`
+5 | `r fivem['awesome food','freq']`
+
+###Wordcloud of Bigrams
+
+*All Features*
+
+With all the features present, it's clear that many words are shared between multiple categories in similar frequencies, and thus limiting its relevance in text classification. For example, `go back` and `good food` are prominent in all or nearly all categories, and thus aren't useful features for the model. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+library(wordcloud)
+#layout(matrix(c(1,2),nrow=2),heights=c(1,4))
+#par(mar=rep(0,4))
+par(mfrow=c(1,3))
+#plot.new()
+wordcloud(onem$word, onem$freq, max.words=50, scale=c(1.5,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.05, 'One Star')
+wordcloud(twom$word, twom$freq, max.words=50, scale=c(1.5,0.2),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.05, 'Two Stars')
+wordcloud(threem$word, threem$freq, max.words=50, scale=c(1.5,0.2),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.05, 'Three Stars')
+par(mfrow=c(1,2))
+wordcloud(fourm$word, fourm$freq, max.words=50, scale=c(1,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.1, 'Four Stars',cex=0.7)
+wordcloud(fivem$word, fivem$freq, max.words=50, scale=c(1,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.1, 'Five Stars',cex=0.7)
+```
+
+*CSF>5 threshold filtered*
+
+A feature with `CSF<5` would means it may coincide between neighboring ratings, but no further than that. This would greatly limit the classification error >1. The effects of this is apparent with the bigrams being much more polarized and distinctive to their respective ratings than without the filter.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+setwd('~/Documents/yelpdata')
+load('wordcloudbigrandomsample.RData')
+load('wordCorBigRandomSample.RData')
+lowCor<-wordCor[wordCor$corxy>5,'word']
+lowCor<-as.character(lowCor)
+onem<-onem[!(onem$word %in% lowCor),]
+twom<-twom[!(twom$word %in% lowCor),]
+twom<-twom[!(grepl("2",twom$word)),]
+twom<-twom[!(grepl("star",twom$word)),]
+threem<-threem[!(threem$word %in% lowCor),]
+threem<-threem[!(grepl("yelp",threem$word)),]
+threem<-threem[!(grepl("star",threem$word)),]
+threem<-threem[!(grepl("3",threem$word)),]
+threem<-threem[!(grepl("=",threem$word)),]
+threem<-threem[!(grepl("-",threem$word)),]
+fourm<-fourm[!(fourm$word %in% lowCor),]
+fourm<-fourm[!(grepl("yelp",fourm$word)),]
+fourm<-fourm[!(grepl("3",fourm$word)),]
+fourm<-fourm[!(grepl("5",fourm$word)),]
+fourm<-fourm[!(grepl("4",fourm$word)),]
+fivem<-fivem[!(fivem$word %in% lowCor),]
+fivem<-fivem[!(grepl("stars",fivem$word)),]
+fivem<-fivem[!(grepl("star",fivem$word)),]
+library(wordcloud)
+#layout(matrix(c(1,2),nrow=2),heights=c(1,4))
+#par(mar=rep(0,4))
+par(mfrow=c(1,3))
+#plot.new()
+wordcloud(onem$word, onem$freq, max.words=50, scale=c(1.5,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=-0.05, 'One Star')
+wordcloud(twom$word, twom$freq, max.words=50, scale=c(1.5,0.2),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.05, 'Two Stars')
+wordcloud(threem$word, threem$freq, max.words=50, scale=c(1.5,0.2),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.05, 'Three Stars')
+par(mfrow=c(1,2))
+wordcloud(fourm$word, fourm$freq, max.words=50, scale=c(1,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.1, 'Four Stars',cex=0.7)
+wordcloud(fivem$word, fivem$freq, max.words=50, scale=c(1,0.15),random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5,y=0.1, 'Five Stars',cex=0.7)
+```
+
+###Text Classification Algorithms
+Three classification algorithms are popular for text classification including Naive Bayes, Support Vector Machine, and Random Forest. According to a study by [Joachims 1998](http://www.cs.cornell.edu/people/tj/publications/joachims_98a.pdf), SVM classification outperformed both Naive Bayes and Random Forest in both performance and precision. 
+
+*CSF threshold filtering is ideal for improving SVM text classification performance*
+
+Given that SVM works by finding the vectors that maximally separates the points between the categories, CSF threshold filtering should be ideally suited to increase the performance of the algorithm since it's filtering the features that have strong overlap between categories.  
+
+#Methods
+
+*Text Corpus Preparation*
+
+1. The data is obtained from the Yelp Data Science Challenge dataset including data on user, reviews, business, tip, and checkin. 
+2. The data cleaned so only the restaurant data is retained. Out of these, 400,000 reviews are randomly sampled for training and testing the model.
+3. The corpus is built with the text mining package, `tm`. The corpus is transformed to lower case, stopwords containing words that offer no significance (eg. you, her, it's) are filtered out, any punctuation removed.  
+4. The words are organized into bigrams using the package `RWeka`. 
+5. Corpus is transformed to a Term Document Matrix with dimensions $m*n$, with $m$ dimension representing the documents sampled, and the $n$ dimensions representing the bigram frequency for each respective document. 
+6. Terms with sparse percentage of above .9992 are removed. This reduces 4,063,604 terms to 5,515. This sparsity results in the most sparse documents to have a minumum sum of 5 count in the features available in the model. 
+
+*Text Classification*
+
+1. The Term Document Matrix was separated into a training and test set with a ratio of 90:10. 
+2. The `RTextTools` package is used to train the Naive Bayes and SVM classifiers. The Random Forest classifier is sourced from the package `randomForest`. 
+
+
+*Oversampling*
+
+Given that the distribution of reviews are not even with four stars and five stars being considerably more frequent, reviews from the other ratings are oversampled so that there are an equal amount of samples in each rating. 40,000 samples from each rating is taken, compiled together, and shuffled in random order. This technique was demonstrated to be effective by [Hung et al. 2014](http://kevin11h.github.io/YelpDatasetChallengeDataScienceAndMachineLearningUCSD/) to address classification bias towards more frequent rating categores.
+
+```{r echo=FALSE, fig.height=3, fig.width=4, message=FALSE, error=FALSE}
+load('starstest.RData')
+starstest<-data.frame(x=starstest)
+histcsf<-ggplot(data=starstest, aes(x))
+histcsf<-histcsf+geom_bar(binwidth=0.5)+ggtitle("Distribution of Ratings")+xlab("Rating (Stars)")+ylab("Number of Reviews")+theme(plot.title=element_text(size=10))+theme(axis.title=element_text(size=7))
+histcsf
+```
+        
+#Results
+
+```{r echo=FALSE}
+load('confusionNaiveBayes.RData')
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varnb=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+accuracynb=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+nb<-confusion
+load('confusion.RData')
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varsvm=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+accuracysvm=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+svm<-confusion
+load('confusionevensample.RData')
+confusion<-confusiontable
+accuracysvmos=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varsvmos=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+svmos<-confusion
+load('confusionCombined.RData')
+accuracysvmcs=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varsvmcsos=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+svmcsos<-confusion
+load('confusionsvmlowcorpruned35000.RData')
+accuracysvmcsos=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varsvmcs=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+svmcs<-confusion
+load('confusionRF.RData')
+accuracyrf=(confusion$Freq[1]+confusion$Freq[7]+confusion$Freq[13]+confusion$Freq[19]+confusion$Freq[25])/sum(confusion$Freq)
+confusion<-mutate(confusion,var=abs(as.integer(Predicted)-as.integer(Actual))*Freq)
+varrf=sum(confusion$var)/sum(confusion$Freq[-c(1,7,13,19,25)])
+rf<-confusion
+
+```
+
+Method                            | Accuracy            | Variance
+----------------------------------|---------------------|------------
+Naive Bayes all features w/ Oversampling | `r accuracynb`| `r varnb`
+SVM all features                  | `r accuracysvm`     | `r varsvm`
+SVM all features w/Oversampling   | `r accuracysvmos`   | `r varsvmos`
+SVM CSF>5 filtered                | `r accuracysvmcs`   | `r varsvmcs`
+SVM CSF>5 filtered w/Oversampling | `r accuracysvmcsos` | `r varsvmcsos`
+Random Forest                     | `r accuracyrf`      | `r varrf`
+
+\begin{center}
+$$Accuracy = \frac{TP}{TP+FP}$$
+$$Variance = \frac{1}{N}\sum_{i=1}^{N}|Actual_i-Predicted_i|$$
+\end{center}
+
+The SVM classifier performed remarkably better than Naive Bayes and Random Forest. CSF>5 filtering increased the classification accuracy while decreasing the variance of the error.
+
+```{r echo=FALSE, fig.align='center', fig.height=2, fig.width=3, warning=FALSE,message=FALSE}
+#load('confusionNaiveBayes.RData')
+##library(ggplot2)
+library(gridExtra)
+#tile <- ggplot() +geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.05)+labs(x="Actual",y="Predicted")
+#tile = tile + 
+ # geom_text(aes(x=Actual, y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+#tile = tile + 
+ # geom_tile(aes(x=Actual, y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.2, fill="black", alpha=0) + ggtitle('Naive Bayes Confusion Matrix')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+#tile
+```
+
+*Confusion Matricies*
+
+```{r echo=FALSE, fig.align='center', fig.height=2.5, fig.width=6}
+load('confusion.RData')
+load('confusionevensample.RData')
+#colnames(confusiontable)<-c('Predicted','Actual','Freq','ActualFreq','Percent')
+colnames(confusion)<-c('Predicted','Actual','Freq','ActualFreq','Percent')
+svmplot <- ggplot() +geom_tile(aes(x=Predicted, y=Actual,fill=Percent),data=confusion, color="black",size=0.1)+labs(x="Actual",y="Predicted")
+svmplot = svmplot + 
+  geom_text(aes(x=Predicted,y=Actual, label=sprintf("%.1f", Percent)),data=confusion, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+svmplot = svmplot + 
+  geom_tile(aes(x=Predicted,y=Actual),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0) + ggtitle('SVM Unfiltered Features')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+
+svmevenplot <- ggplot() +geom_tile(aes(x=Predicted, y=Actual,fill=Percent),data=confusiontable, color="black",size=0.1)+labs(x="Actual",y="Predicted")
+svmevenplot = svmevenplot + geom_text(aes(x=Predicted,y=Actual, label=sprintf("%.1f", Percent)),data=confusiontable, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+svmevenplot = svmevenplot + geom_tile(aes(x=Predicted,y=Actual),data=subset(confusiontable, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0) + ggtitle('SVM Oversampling')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+grid.arrange(svmplot,svmevenplot,ncol=2)
+```
+```{r echo=FALSE, fig.align='center', fig.height=2.5, fig.width=6}
+load('confusionCombined.RData')
+confusiontable<-confusion
+load('confusionsvmlowcorpruned35000.RData')
+
+colnames(confusion)<-c('Predicted','Actual','Freq','ActualFreq','Percent')
+svmplot <- ggplot() +geom_tile(aes(x=Predicted, y=Actual,fill=Percent),data=confusion, color="black",size=0.1)+labs(x="Actual",y="Predicted")
+svmplot = svmplot + 
+  geom_text(aes(x=Predicted,y=Actual, label=sprintf("%.1f", Percent)),data=confusion, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+svmplot = svmplot + 
+  geom_tile(aes(x=Predicted,y=Actual),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.2, fill="black", alpha=0) + ggtitle('SVM CSF>5 filtered')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+
+svmevenplot <- ggplot() +geom_tile(aes(x=Predicted, y=Actual,fill=Percent),data=confusiontable, color="black",size=0.1)+labs(x="Actual",y="Predicted")
+svmevenplot = svmevenplot + geom_text(aes(x=Predicted,y=Actual, label=sprintf("%.1f", Percent)),data=confusiontable, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+svmevenplot = svmevenplot + geom_tile(aes(x=Predicted,y=Actual),data=subset(confusiontable, as.character(Actual)==as.character(Predicted)), color="black",size=0.2, fill="black", alpha=0) + ggtitle('SVM CSF>5 Filtered w/ Oversampling')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+grid.arrange(svmplot,svmevenplot,ncol=2)
+```
+
+*Support Vector Machine - No Feature Selection*
+
+With no feature selection, the model shows a strong classification bias towards a rating of four. This is due to the distribution of ratings being highly skewed to the rating of four. To counter this bias, an over sampling of the training set is performed. Here the training set consists of 35000 reviews that are evenly sampled from each of the five ratings (5*7000). This corrected the classification bias towards 4 stars. However, the variance of the classification error is largely unaffected with the error being off by two or more ratings. 
+
+*Support Vector Machine - CSF>5 Filtered*
+
+With the irrelevant features filtered out, the classification accuracy was increased by 23.0% without oversampling and 15.1% with oversampling. While the classification bias towards 4 stars is still present, it is drastically reduced. This is substantial evidence to support the hypothesis that the bias is due to a significantly greater amount of irrelevant features with a $CSF>5$. With oversampling, the classification error >1 is reduced. 
+
+
+```{r echo=FALSE, fig.align='center', fig.height=2, fig.width=3, warning=FALSE,message=FALSE}
+#tile <- ggplot() +geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=rf, color="black",size=0.1)+labs(x="Actual",y="Predicted")
+#tile = tile + 
+#  geom_text(aes(x=Actual, y=Predicted, label=sprintf("%.1f", Percent)),data=rf, size=2, colour="black")+scale_fill_gradient(low="grey",high="red")
+#tile = tile + 
+#  geom_tile(aes(x=Actual, y=Predicted),data=subset(rf, as.character(Actual)==as.character(Predicted)), color="black",size=0.2, fill="black", alpha=0) + ggtitle('Random Forest Confusion Matrix')+theme(plot.title=element_text(size=8))+theme(axis.title=element_text(size=5))
+#tile
+```
+
+#Discussion
+While a 54.9% accuracy still leaves much room for improvement, CSF threshold filtering significantly limited the margin of error >1 while improving the accuracy of the SVM classifier.  
+
+In a future study, it would be interesting to compare the CSF threshold filtering strategy with other feature selection strategies such as information gain, and chi-squared such as demonstrated in [Yang 1997](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.32.9956&rep=rep1&type=pdf). 
+
+
+#References
+1. [Hung, K., Qui, H., "Yelp Dataset Challenge 2014" 2014 *UCSD Data Science Society* http://kevin11h.github.io/YelpDatasetChallengeDataScienceAndMachineLearningUCSD/](http://kevin11h.github.io/YelpDatasetChallengeDataScienceAndMachineLearningUCSD/)
+
+2. [Joachims, T., "Text Categorization with Support Vector Machines: Learning with Many Relevant Features" 1998 http://www.cs.cornell.edu/people/tj/publications/joachims_98a.pdf](http://www.cs.cornell.edu/people/tj/publications/joachims_98a.pdf)
+
+3. [Yang, Y., Pedersen, J.O., "A Comparative Study on Feature Selection on Text Classification" 1997 http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.32.9956&rep=rep1&type=pdf](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.32.9956&rep=rep1&type=pdf)
