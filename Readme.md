@@ -1,5 +1,5 @@
 # Yelp Data Challenge: Predict Restaurant Rating from Review Text
-_________________________________________________________________________
+
 ## About this project
 This is part of the Yelp Data Challenge that you can find here: https://www.yelp.com/dataset/challenge
 My goal is to determine the features that is most predictive of a rating. This would allow restaurants to gain meaningful insight on the kinds of customer experiences that corresponds to ratings. What is the more important, service or food?
